@@ -52,7 +52,7 @@ Not sure which path applies? Give an agent the bounded, read-only
 
 ## Smallest reversible smoke test
 
-This POSIX-shell test launches version `4.3.0`, performs only the MCP handshake and `tools/list`,
+This POSIX-shell test launches version `4.4.0`, performs only the MCP handshake and `tools/list`,
 and confines the package cache and any Lex compatibility state to one temporary directory. It does
 not call a write tool or modify the repository.
 
@@ -71,13 +71,13 @@ smoke_dir="$(mktemp -d)"
     | LEX_WORKSPACE_ROOT="$smoke_dir" \
       LEX_DB_PATH="$smoke_dir/memory.db" \
       npm_config_cache="$smoke_dir/npm-cache" \
-      npx --yes @smartergpt/lex-mcp@4.3.0
+      npx --yes @smartergpt/lex-mcp@4.4.0
 )
 
 find "$smoke_dir" -maxdepth 4 -print
 ```
 
-A successful response identifies `lex-mcp` version `4.3.0` and returns Lex's tool list. Review the
+A successful response identifies `lex-mcp` version `4.4.0` and returns Lex's tool list. Review the
 printed temporary path, then remove only that directory:
 
 ```bash
@@ -103,7 +103,7 @@ Add to `.vscode/mcp.json`:
     "lex": {
       "type": "stdio",
       "command": "npx",
-      "args": ["--yes", "@smartergpt/lex-mcp@4.3.0"],
+      "args": ["--yes", "@smartergpt/lex-mcp@4.4.0"],
       "env": {
         "LEX_WORKSPACE_ROOT": "${workspaceFolder}"
       }
@@ -122,7 +122,7 @@ local workspace:
   "mcpServers": {
     "lex": {
       "command": "npx",
-      "args": ["--yes", "@smartergpt/lex-mcp@4.3.0"],
+      "args": ["--yes", "@smartergpt/lex-mcp@4.4.0"],
       "env": {
         "LEX_WORKSPACE_ROOT": "/absolute/path/to/project"
       }
@@ -230,7 +230,7 @@ wrapper release:
 - supports the exact same Node.js range as Lex.
 
 For this release, the wrapper, dependency pin, installed Lex core, and server-reported version are
-all `4.3.0`; the Node range is `>=24`.
+all `4.4.0`; the Node range is `>=24`.
 
 Publish the matching Lex release before publishing this wrapper. Candidate CI installs the exact
 public dependency graph from the committed lockfile, rebuilds native dependencies, runs the delivery
@@ -272,7 +272,7 @@ Before the matching Lex version is public, validate an externally reviewed packe
 without changing this repository's registry-shaped release lock:
 
 ```bash
-LEX_MCP_LEX_TARBALL=/absolute/path/to/smartergpt-lex-4.3.0.tgz npm run test:pack
+LEX_MCP_LEX_TARBALL=/absolute/path/to/smartergpt-lex-4.4.0.tgz npm run test:pack
 ```
 
 The smoke's temporary install lock must retain that supplied tarball as the installed Lex source;

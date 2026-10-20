@@ -1,6 +1,6 @@
 {
   "name": "@smartergpt/lex-mcp",
-  "version": "4.4.2",
+  "version": "4.4.3",
   "description": "MCP server for Lex episodic memory - stdio transport wrapper",
   "mcpName": "dev.smartergpt/lex",
   "type": "module",
@@ -26,7 +26,8 @@
     "README.md"
   ],
   "scripts": {
-    "test": "npm run test:types && npm run test:release-policy && node test-stdio.mjs && node test-contract.mjs && node test-mcp-server.mjs --local --clean",
+    "test": "npm run test:native && npm run test:types && npm run test:release-policy && node test-stdio.mjs && node test-contract.mjs && node test-mcp-server.mjs --local --clean",
+    "test:native": "node scripts/check-bundled-sqlite.mjs",
     "test:types": "tsc --noEmit --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 stdio.d.ts test-types.mts",
     "test:release-policy": "node test-release-policy.mjs",
     "test:stdio": "node test-stdio.mjs",
@@ -41,7 +42,7 @@
     "link:local": "rm -rf node_modules/@smartergpt/lex && mkdir -p node_modules/@smartergpt && ln -s /srv/lex-mcp/lex node_modules/@smartergpt/lex"
   },
   "dependencies": {
-    "@smartergpt/lex": "4.4.2"
+    "@smartergpt/lex": "4.4.3"
   },
   "publishConfig": {
     "access": "public",

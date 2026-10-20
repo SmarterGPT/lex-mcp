@@ -147,8 +147,8 @@ jobs:
       - name: Install exact public dependency graph
         run: npm ci --ignore-scripts
 
-      - name: Build native dependencies
-        run: npm rebuild better-sqlite3-multiple-ciphers
+      - name: Verify bundled native SQLite without rebuilding
+        run: npm run test:native
 
       - name: Run the full delivery gate
         env:
@@ -157,6 +157,7 @@ jobs:
           npm audit --audit-level=high
           npm test
           npm run test:pack
+          npm run test:pack -- --ignore-scripts
 
       - name: Create and verify commit-bound candidate
         id: candidate
@@ -214,7 +215,7 @@ jobs:
           artifact-ids: ${{ needs.build-candidate.outputs.artifact_id }}
           path: candidate
 
-      - name: Verify receipt and normal-lifecycle install
+      - name: Verify receipt and both consumer install modes
         shell: pwsh
         env:
           SOURCE_COMMIT: ${{ needs.validate-identity.outputs.source_commit }}
@@ -222,12 +223,28 @@ jobs:
           $tarball = (Get-ChildItem -LiteralPath candidate -Filter 'smartergpt-lex-mcp-*.tgz' -File -Recurse -ErrorAction Stop).FullName
           $receipt = (Get-ChildItem -LiteralPath candidate -Filter 'release-candidate.json' -File -Recurse -ErrorAction Stop).FullName
           node scripts/create-release-candidate.mjs verify $receipt $tarball $env:SOURCE_COMMIT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $consumer = Join-Path $env:RUNNER_TEMP 'lex-mcp-consumer'
           New-Item -ItemType Directory -Path $consumer -Force | Out-Null
           Push-Location $consumer
           npm init -y
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm install $tarball
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node -e "const fs=require('node:fs'); const path=require('node:path'); const m=JSON.parse(fs.readFileSync(path.resolve('node_modules/@smartergpt/lex-mcp/package.json'))); const l=JSON.parse(fs.readFileSync(path.resolve('node_modules/@smartergpt/lex/package.json'))); if(m.version!==l.version||m.dependencies['@smartergpt/lex']!==l.version) throw new Error('installed wrapper and Lex differ'); Promise.all([import('@smartergpt/lex-mcp'),import('@smartergpt/lex/mcp-server')]).then(()=>console.log('Exact Windows consumer smoke passed'));"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node "$env:GITHUB_WORKSPACE/scripts/check-bundled-sqlite.mjs" $consumer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          $disabledConsumer = Join-Path $env:RUNNER_TEMP 'lex-mcp-consumer-ignore-scripts'
+          New-Item -ItemType Directory -Path $disabledConsumer -Force | Out-Null
+          Push-Location $disabledConsumer
+          npm init -y
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm install $tarball --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node "$env:GITHUB_WORKSPACE/scripts/check-bundled-sqlite.mjs" $disabledConsumer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Pop-Location
 
   publish-npm:

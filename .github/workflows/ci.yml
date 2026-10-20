@@ -35,8 +35,8 @@ jobs:
       - name: Install exact public dependency graph
         run: npm ci --ignore-scripts
 
-      - name: Build native dependencies
-        run: npm rebuild better-sqlite3-multiple-ciphers
+      - name: Verify bundled native SQLite without rebuilding
+        run: npm run test:native
 
       - name: Reject known high-severity dependency findings
         run: npm audit --audit-level=high
@@ -46,6 +46,11 @@ jobs:
 
       - name: Run packed public-dependency smoke test
         run: npm run test:pack
+        env:
+          LEX_MCP_USE_PUBLIC_LEX: "1"
+
+      - name: Verify packed consumer with lifecycle scripts disabled
+        run: npm run test:pack -- --ignore-scripts
         env:
           LEX_MCP_USE_PUBLIC_LEX: "1"
 

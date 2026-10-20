@@ -47,6 +47,26 @@ for (const prerequisite of ["validate-identity", "build-candidate", "verify-publ
 }
 assert(!/^\s*NODE_AUTH_TOKEN:/m.test(releaseWorkflow), "workflow does not inject a long-lived npm token");
 
+// Native publication must work from packaged prebuilds in both installation modes.
+assert(pkg.scripts?.["test:native"] === "node scripts/check-bundled-sqlite.mjs", "native gate uses the packaged SQLite probe");
+for (const [name, workflow] of [["CI", ciWorkflow], ["release", releaseWorkflow]]) {
+  assert(!workflow.includes("npm rebuild"), `${name} does not repair missing packaged native binaries`);
+  assert(workflow.includes("npm ci --ignore-scripts"), `${name} starts from a disabled-lifecycle dependency install`);
+  assert(workflow.includes("npm run test:pack -- --ignore-scripts"), `${name} tests a packed disabled-lifecycle consumer`);
+}
+const windowsJobStart = releaseWorkflow.indexOf("\n  smoke-windows:");
+assert(windowsJobStart > 0 && windowsJobStart < publishJobStart, "release policy locates the Windows candidate smoke job");
+const windowsJob = releaseWorkflow.slice(windowsJobStart, publishJobStart);
+const windowsLines = windowsJob.split(/\r?\n/);
+assert(windowsLines.some((line) => line.trim() === "npm install $tarball"), "Windows tests the normal consumer install");
+assert(windowsLines.some((line) => line.trim() === "npm install $tarball --ignore-scripts"), "Windows tests the disabled-lifecycle consumer install");
+const nativeCommands = windowsLines.flatMap((line, index) => /^\s*(?:node|npm)\s/.test(line) ? [index] : []);
+assert(nativeCommands.length >= 8, "Windows candidate smoke retains all native command gates");
+for (const index of nativeCommands) {
+  assert(windowsLines[index + 1]?.trim() === 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+    `Windows preserves failure from: ${windowsLines[index].trim().split(/\s+/).slice(0, 3).join(" ")}`);
+}
+
 const actionRefs = [...`${releaseWorkflow}\n${ciWorkflow}`.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)(?:\s*#.*)?$/gm)].map((match) => match[1]);
 assert(actionRefs.length > 0, "release and CI workflows declare actions");
 for (const ref of actionRefs) {

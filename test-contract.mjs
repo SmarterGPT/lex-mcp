@@ -8,7 +8,7 @@
  *   - Compat alias: LEX_MEMORY_DB
  *   - Canonical launch: node index.mjs (simulates npx @smartergpt/lex-mcp)
  *   - serverInfo returns correct name and version
- *   - Tool list returns exactly 14 canonical tools
+ *   - Tool list returns exactly 15 canonical tools
  *
  * Usage:
  *   node test-contract.mjs
@@ -315,12 +315,13 @@ async function testServerInfo() {
 // ── Test 7: tool list ───────────────────────────────────────────────────────
 
 async function testToolList() {
-  console.log("\n📋 Test: tools/list returns exactly 14 canonical tools");
+  console.log("\n📋 Test: tools/list returns exactly 15 canonical tools");
 
   const CANONICAL_TOOLS = [
     "atlas_analyze",
     "contradictions_scan",
     "db_stats",
+    "destination_inspect",
     "frame_create",
     "frame_get",
     "frame_list",
@@ -351,12 +352,22 @@ async function testToolList() {
     const tools = toolsResp?.result?.tools || [];
     const names = tools.map((t) => t.name).sort();
 
-    assert(tools.length === 14, `Tool count is 14`, `Got: ${tools.length}`);
+    assert(tools.length === 15, `Tool count is 15`, `Got: ${tools.length}`);
     assert(
       JSON.stringify(names) === JSON.stringify(CANONICAL_TOOLS),
       "Tool names match canonical list",
       `Got: ${JSON.stringify(names)}`
     );
+
+    const destination = tools.find((tool) => tool.name === "destination_inspect");
+    const create = tools.find((tool) => tool.name === "frame_create");
+    assert(destination?.annotations?.readOnlyHint === true, "Destination preflight remains read-only");
+    assert(destination?.inputSchema?.additionalProperties === false &&
+      Object.keys(destination?.inputSchema?.properties || {}).length === 0,
+      "Destination preflight accepts no payload or selectors");
+    assert(create?.annotations?.readOnlyHint === false, "Frame capture remains a write");
+    assert(create?.inputSchema?.properties?.expected_destination?.type === "string",
+      "Frame capture exposes the expected-destination restriction");
 
     // Verify no legacy-named tools leak into the list
     const legacyNames = ["remember", "recall", "introspect", "timeline", "code_atlas", "get_frame", "list_frames"];
@@ -410,6 +421,27 @@ async function testIntrospectVersion() {
   }
 }
 
+async function testUnboundDestination() {
+  console.log("\n📋 Test: compatibility-mode destination inspection does not fabricate authority");
+  const workDir = mkdtempSync(join(tmpdir(), "lex-contract-destination-"));
+  try {
+    const responses = await sendRequest(
+      { LEX_WORKSPACE_ROOT: workDir, _workDir: workDir },
+      [
+        { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "destination_inspect", arguments: {} } },
+      ]
+    );
+    const response = responses.find((entry) => entry.id === 2);
+    assert(response?.error?.data?.lexCode === "LEX_WORKSPACE_UNBOUND",
+      "Unbound destination fails with the Lex authority error",
+      `Got: ${JSON.stringify(response?.error)}`);
+    assert(response?.result === undefined, "Unbound destination returns no asserted destination");
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
 // ── Test 9: startup with no env vars ────────────────────────────────────────
 
 async function testBareStartup() {
@@ -451,6 +483,7 @@ async function main() {
   await testCallerConfigFile();
   await testServerInfo();
   await testToolList();
+  await testUnboundDestination();
   await testIntrospectVersion();
   await testBareStartup();
 

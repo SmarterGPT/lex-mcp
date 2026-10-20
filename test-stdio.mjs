@@ -206,6 +206,49 @@ assert.deepEqual(
   "close flushes a trailing record before closing Lex",
 );
 
+const destinationInput = new PassThrough();
+const destinationOutput = new PassThrough();
+let destinationWire = "";
+const destinationRequests = [];
+const destination = Object.freeze({
+  identity: `lex-destination-v1:sha256:${"a".repeat(64)}`,
+  backend: { identity: { verification: "trusted-host", identity: "fixture-backend" } },
+  workspaceId: "fixture-workspace",
+});
+const receipt = { frame_id: "fixture-frame", destination };
+destinationOutput.on("data", (chunk) => { destinationWire += chunk.toString(); });
+const destinationTransport = startLexMcpStdio({
+  serverOptions,
+  input: destinationInput,
+  output: destinationOutput,
+  serverFactory() {
+    return {
+      async handleRequest(request) {
+        destinationRequests.push(request);
+        return request.params.name === "destination_inspect"
+          ? { data: { destination } }
+          : { data: receipt };
+      },
+      async close() {},
+    };
+  },
+});
+const destinationEnded = once(destinationInput, "end");
+destinationInput.end([
+  { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "destination_inspect", arguments: {} } },
+  { jsonrpc: "2.0", id: 11, method: "tools/call", params: {
+    name: "frame_create", arguments: { expected_destination: destination.identity },
+  } },
+].map((request) => JSON.stringify(request)).join("\n"));
+await destinationEnded;
+await destinationTransport.idle();
+const destinationResponses = destinationWire.trim().split("\n").map((line) => JSON.parse(line));
+assert.deepEqual(destinationResponses[0].result.data, { destination });
+assert.deepEqual(destinationResponses[1].result.data, receipt);
+assert.deepEqual(destinationRequests[0].params.arguments, {});
+assert.equal(destinationRequests[1].params.arguments.expected_destination, destination.identity);
+await destinationTransport.close();
+
 console.log(
-  "✅ stdio transport preserves explicit Lex 4 scope and compact responses",
+  "✅ stdio transport preserves explicit Lex 4 scope, compact responses and destination receipts",
 );

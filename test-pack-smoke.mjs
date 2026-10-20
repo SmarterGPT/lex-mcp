@@ -15,19 +15,45 @@
  *   node test-pack-smoke.mjs --keep   # keep temp dir for inspection
  */
 
-import { execSync, spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { createHash } from "crypto";
-import { mkdirSync, mkdtempSync, existsSync, readdirSync, rmSync, readFileSync } from "fs";
-import { join, resolve } from "path";
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, rmSync, readFileSync, realpathSync } from "fs";
+import { basename, delimiter, dirname, join, resolve, sep } from "path";
+import { fileURLToPath, pathToFileURL } from "url";
 import { tmpdir } from "os";
 
 const verbose = process.argv.includes("--verbose");
 const keep = process.argv.includes("--keep");
+const ignoreScripts = process.argv.includes("--ignore-scripts");
+const installFlags = ignoreScripts ? ["--ignore-scripts"] : [];
 
 const LEX_ROOT = process.env.LEX_MCP_LEX_ROOT || join(import.meta.dirname, "..", "lex");
 const STAGED_LEX_TARBALL = process.env.LEX_MCP_LEX_TARBALL;
 const USE_PUBLIC_LEX = process.env.LEX_MCP_USE_PUBLIC_LEX === "1";
 const LEX_MCP_ROOT = import.meta.dirname;
+
+// Invoke npm's JavaScript entry with argv on Windows too; never interpolate paths
+// into a shell command. Direct `node test-pack-smoke.mjs` remains supported.
+function findNpmCli() {
+  const candidates = [
+    process.env.npm_execpath,
+    join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+    resolve(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+  ];
+  for (const pathDir of (process.env.PATH || "").split(delimiter).filter(Boolean)) {
+    const npmPath = join(pathDir, process.platform === "win32" ? "npm.cmd" : "npm");
+    if (!existsSync(npmPath)) continue;
+    const npmRealPath = realpathSync(npmPath);
+    candidates.push(npmRealPath, join(dirname(npmRealPath), "node_modules", "npm", "bin", "npm-cli.js"));
+  }
+  const cli = candidates.find((candidate) => candidate && basename(candidate) === "npm-cli.js" && existsSync(candidate));
+  if (!cli) throw new Error("Cannot locate npm-cli.js; run this test through npm run test:pack");
+  return realpathSync(cli);
+}
+const NPM_CLI = findNpmCli();
+function runNpm(args, options) {
+  return execFileSync(process.execPath, [NPM_CLI, ...args], options);
+}
 
 let passed = 0;
 let failed = 0;
@@ -113,7 +139,7 @@ async function main() {
   const packDir = mkdtempSync(join(tmpdir(), "lex-pack-smoke-"));
   log(`Temp dir: ${packDir}`);
 
-  let lexTarball, lexMcpTarball;
+  let lexTarball, lexMcpTarball, expectedLexIntegrity;
   try {
     if (USE_PUBLIC_LEX) {
       lexTarball = null;
@@ -125,7 +151,7 @@ async function main() {
     } else {
       // Pack lex
       log("Packing @smartergpt/lex...");
-      const lexPackOut = execSync("npm pack --pack-destination " + JSON.stringify(packDir), {
+      const lexPackOut = runNpm(["pack", "--pack-destination", packDir], {
         cwd: LEX_ROOT,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -136,15 +162,17 @@ async function main() {
     }
 
     if (lexTarball) {
-      const releaseLock = JSON.parse(readFileSync(join(LEX_MCP_ROOT, "package-lock.json"), "utf-8"));
-      const stagedIntegrity = `sha512-${createHash("sha512").update(readFileSync(lexTarball)).digest("base64")}`;
-      const lockedIntegrity = releaseLock.packages?.["node_modules/@smartergpt/lex"]?.integrity;
-      assert(lockedIntegrity === stagedIntegrity, "release lock integrity binds the packed Lex candidate", `lock: ${lockedIntegrity}, candidate: ${stagedIntegrity}`);
+      expectedLexIntegrity = `sha512-${createHash("sha512").update(readFileSync(lexTarball)).digest("base64")}`;
+      if (!STAGED_LEX_TARBALL) {
+        const releaseLock = JSON.parse(readFileSync(join(LEX_MCP_ROOT, "package-lock.json"), "utf-8"));
+        const lockedIntegrity = releaseLock.packages?.["node_modules/@smartergpt/lex"]?.integrity;
+        assert(lockedIntegrity === expectedLexIntegrity, "release lock integrity binds the packed Lex candidate", `lock: ${lockedIntegrity}, candidate: ${expectedLexIntegrity}`);
+      }
     }
 
     // Pack lex-mcp
     log("Packing @smartergpt/lex-mcp...");
-    const mcpPackOut = execSync("npm pack --pack-destination " + JSON.stringify(packDir), {
+    const mcpPackOut = runNpm(["pack", "--pack-destination", packDir], {
       cwd: LEX_MCP_ROOT,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -165,7 +193,7 @@ async function main() {
   const installDir = join(packDir, "install");
   try {
     mkdirSync(installDir, { recursive: true });
-    execSync("npm init -y", {
+    runNpm(["init", "-y"], {
       cwd: installDir,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -173,7 +201,7 @@ async function main() {
 
     if (lexTarball) {
       log("Installing lex tarball...");
-      execSync(`npm install ${JSON.stringify(lexTarball)}`, {
+      runNpm(["install", lexTarball, ...installFlags], {
         cwd: installDir,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -182,12 +210,19 @@ async function main() {
     }
 
     log("Installing lex-mcp tarball...");
-    execSync(`npm install ${JSON.stringify(lexMcpTarball)}`, {
+    runNpm(["install", lexMcpTarball, ...installFlags], {
       cwd: installDir,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 180000,
     });
+
+    const nativeProof = execFileSync(process.execPath,
+      [join(LEX_MCP_ROOT, "scripts", "check-bundled-sqlite.mjs"), installDir],
+      { encoding: "utf8", timeout: 30000 });
+    const nativeResult = JSON.parse(nativeProof.trim());
+    assert(nativeResult.fts5 === true && nativeResult.noSQLiteInstallHooks === true,
+      `bundled SQLite works after ${ignoreScripts ? "ignore-scripts" : "normal"} installation`);
 
     // Verify node_modules layout
     const mcpBin = join(installDir, "node_modules", ".bin", "lex-mcp");
@@ -216,8 +251,22 @@ async function main() {
     assert(lexPkgJson.version === lexMcpPkgJson.version, "packed Lex core matches wrapper version", `core: ${lexPkgJson.version}, wrapper: ${lexMcpPkgJson.version}`);
     assert(lexPkgJson.engines?.node === lexMcpPkgJson.engines?.node, "packed wrapper Node engine matches Lex core", `wrapper: ${lexMcpPkgJson.engines?.node}, core: ${lexPkgJson.engines?.node}`);
     if (lexTarball) {
-      const installedLexSource = installLock.packages?.["node_modules/@smartergpt/lex"]?.resolved;
+      const installedLex = installLock.packages?.["node_modules/@smartergpt/lex"];
+      const installedLexSource = installedLex?.resolved;
       assert(installedLexSource?.startsWith("file:"), "clean install retains the packed Lex candidate", `resolved: ${installedLexSource}`);
+      assert(installedLex?.integrity === expectedLexIntegrity, "clean install retains the candidate bytes", `installed: ${installedLex?.integrity}, candidate: ${expectedLexIntegrity}`);
+      if (installedLexSource?.startsWith("file:")) {
+        const installedLexPath = fileURLToPath(new URL(installedLexSource, pathToFileURL(installDir + sep)));
+        assert(realpathSync(installedLexPath) === realpathSync(lexTarball), "clean install retains the exact candidate source", `installed: ${installedLexPath}, candidate: ${lexTarball}`);
+      }
+    } else {
+      const releaseLock = JSON.parse(readFileSync(join(LEX_MCP_ROOT, "package-lock.json"), "utf8"));
+      const lockedLex = releaseLock.packages?.["node_modules/@smartergpt/lex"];
+      const installedLex = installLock.packages?.["node_modules/@smartergpt/lex"];
+      assert(installedLex?.resolved === lockedLex?.resolved,
+        "clean public install retains the release-locked Lex source", `installed: ${installedLex?.resolved}, locked: ${lockedLex?.resolved}`);
+      assert(installedLex?.integrity === lockedLex?.integrity,
+        "clean public install retains the release-locked Lex bytes", `installed: ${installedLex?.integrity}, locked: ${lockedLex?.integrity}`);
     }
   } catch (err) {
     console.error(`\n💥 Install failed: ${err.message}`);
@@ -264,7 +313,9 @@ async function main() {
     // Verify tools/list
     const tools = responses.find((r) => r.id === 2);
     const toolNames = (tools?.result?.tools || []).map((t) => t.name).sort();
-    assert(toolNames.length === 14, "14 tools from packed artifact", `Got: ${toolNames.length}`);
+    assert(toolNames.length === 15, "15 tools from packed artifact", `Got: ${toolNames.length}`);
+
+    assert(toolNames.includes("destination_inspect"), "Destination preflight is delivered by the packed artifact");
 
     // Verify system_introspect
     const introspect = responses.find((r) => r.id === 3);

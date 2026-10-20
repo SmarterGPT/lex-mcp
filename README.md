@@ -52,7 +52,7 @@ Not sure which path applies? Give an agent the bounded, read-only
 
 ## Smallest reversible smoke test
 
-This POSIX-shell test launches version `4.4.2`, performs only the MCP handshake and `tools/list`,
+This POSIX-shell test launches version `4.4.3`, performs only the MCP handshake and `tools/list`,
 and confines the package cache and any Lex compatibility state to one temporary directory. It does
 not call a write tool or modify the repository.
 
@@ -71,13 +71,13 @@ smoke_dir="$(mktemp -d)"
     | LEX_WORKSPACE_ROOT="$smoke_dir" \
       LEX_DB_PATH="$smoke_dir/memory.db" \
       npm_config_cache="$smoke_dir/npm-cache" \
-      npx --yes @smartergpt/lex-mcp@4.4.2
+      npx --yes @smartergpt/lex-mcp@4.4.3
 )
 
 find "$smoke_dir" -maxdepth 4 -print
 ```
 
-A successful response identifies `lex-mcp` version `4.4.2` and returns Lex's tool list. Review the
+A successful response identifies `lex-mcp` version `4.4.3` and returns Lex's tool list. Review the
 printed temporary path, then remove only that directory:
 
 ```bash
@@ -103,7 +103,7 @@ Add to `.vscode/mcp.json`:
     "lex": {
       "type": "stdio",
       "command": "npx",
-      "args": ["--yes", "@smartergpt/lex-mcp@4.4.2"],
+      "args": ["--yes", "@smartergpt/lex-mcp@4.4.3"],
       "env": {
         "LEX_WORKSPACE_ROOT": "${workspaceFolder}"
       }
@@ -122,7 +122,7 @@ local workspace:
   "mcpServers": {
     "lex": {
       "command": "npx",
-      "args": ["--yes", "@smartergpt/lex-mcp@4.4.2"],
+      "args": ["--yes", "@smartergpt/lex-mcp@4.4.3"],
       "env": {
         "LEX_WORKSPACE_ROOT": "/absolute/path/to/project"
       }
@@ -211,14 +211,18 @@ Formatting and diagnostics never change scope or authorization outcomes.
 
 ## Tools delivered from Lex
 
-The current coordinated release exposes 14 tools:
+The current coordinated release exposes 15 tools:
 
 - `frame_create`, `frame_validate`, `frame_search`, `frame_get`, and `frame_list`;
 - `policy_check`, `timeline_show`, and `atlas_analyze`;
 - `system_introspect`, `help`, and `hints_get`;
-- `contradictions_scan`, `db_stats`, and `turncost_calculate`.
+- `contradictions_scan`, `db_stats`, and `turncost_calculate`;
+- `destination_inspect`, a payload-free preflight for an authorized Frame save.
 
 Lex defines these tools and their behavior. Lex-MCP transports their requests and responses.
+Destination inspection is read-only and requires the same authorization as `frame_create`.
+Its destination identity can restrict a later save through `expected_destination`; it does not
+grant consent or change the trusted host boundary.
 
 ## Release contract
 
@@ -230,10 +234,10 @@ wrapper release:
 - supports the exact same Node.js range as Lex.
 
 For this release, the wrapper, dependency pin, installed Lex core, and server-reported version are
-all `4.4.2`; the Node range is `>=24`.
+all `4.4.3`; the Node range is `>=24`.
 
 Publish the matching Lex release before publishing this wrapper. Candidate CI installs the exact
-public dependency graph from the committed lockfile, rebuilds native dependencies, runs the delivery
+public dependency graph from the committed lockfile, verifies bundled native SQLite, runs the delivery
 gate, and packs one retained wrapper artifact. It must not use or persist a `file:` dependency.
 
 After Lex is public:
@@ -258,25 +262,33 @@ before creating the GitHub release.
 
 ```bash
 npm ci --ignore-scripts
-npm rebuild better-sqlite3-multiple-ciphers
 npm test
 npm run test:pack
+npm run test:pack -- --ignore-scripts
 ```
 
 `npm test` covers the public TypeScript surface, stdio lifecycle and error behavior, exact release
-contract, local compatibility resolution, MCP handshake, introspection, and the 14-tool inventory.
+contract, local compatibility resolution, MCP handshake, introspection, and the 15-tool inventory.
 `npm run test:pack` installs locally packed Lex and Lex-MCP artifacts into a clean temporary project
-and repeats the public launch checks.
+and repeats the public launch checks. Both normal and disabled-lifecycle installs verify
+that the bundled SQLite native module loads and FTS5 works without a rebuild.
+
+The SQLite 13 dependency requires glibc 2.35 or newer on GNU/Linux. Windows x64/ARM64,
+Linux glibc/musl x64/ARM64 and macOS x64/ARM64 have upstream bundled prebuilds;
+Windows x86 and Linux armv7 are no longer supported by this dependency. See the
+[upstream compatibility notes](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v13.0.3).
 
 Before the matching Lex version is public, validate an externally reviewed packed Lex candidate
 without changing this repository's registry-shaped release lock:
 
 ```bash
-LEX_MCP_LEX_TARBALL=/absolute/path/to/smartergpt-lex-4.4.2.tgz npm run test:pack
+LEX_MCP_LEX_TARBALL=/absolute/path/to/smartergpt-lex-4.4.3.tgz npm run test:pack
 ```
 
 The smoke's temporary install lock must retain that supplied tarball as the installed Lex source;
 the release lock in this repository must still resolve the eventual public registry artifact.
+The explicit staged mode validates the supplied candidate independently of the release-lock
+integrity check. Public-dependency CI continues to use the committed registry lock.
 
 ## Learn more
 
